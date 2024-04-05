@@ -1,0 +1,14 @@
+
+
+echo off
+ set FLEXLM_TIMEOUT=2000000000
+ set /a cnt +=1
+ set REQUIREDBIN=\REPO\REQUIRED-8.1.2-R\bin
+ set REQUIREDPATH=\REPO\REQUIRED\REQUIRED-8.1.2-R
+ if not "%REQUIREDINPATH%"=="TRUE" set PATH="%REQUIREDBIN%";"%PATH%"
+ set REQUIREDINPATH=TRUE
+ echo Performing REQUIRED analysis
+ echo analyzing %cnt% of %TOTAL_COUNT% "#fullfilename#"
+ "\REPO\REQUIRED\REQUIRED-8.1.2-R\bin\required.exe" -ppmetrics+ -pplist+ -ppfilename+ -via "/REPO/required/_required_cfg.txt" "#fullfilename#"
+ "REPO\REQUIRED\REQUIRED-8.1.2-R\bin\errdsp.exe" REQUIRED -via "REPO/required/_required_cfg.txt" -list "#folderName#\_required_list.txt" -op "#folderName#" -file #filename# "#fullfilename#"
+ echo finished single file
