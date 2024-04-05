@@ -1,0 +1,21 @@
+echo off
+echo.
+
+
+echo.
+cd #folderName#
+echo.
+echo Deleting previous temporary files
+if exist *.c.err del /Q *.c.err
+if exist *.c.met del /Q *.c.met
+if exist *.c.txt del /Q *.c.txt
+if exist *.c.i del /Q *.c.i
+echo.
+
+
+set REQUIREDINPATH=FALSE
+set cnt=0
+set TOTAL_COUNT=#count#
+echo Analyzing %TOTAL_COUNT% files...
+echo.
+echo.
