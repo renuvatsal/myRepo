@@ -1,0 +1,63 @@
+//Pipepline vairables
+import hudson.FilePath
+def agentBuild = 'ITTOR47YBS08'
+def agentBuildPathAPPS = 'D:\\Path\\APPS'
+def scmVars = null
+def artifactoryProjectName = 'PROJ'
+def projectRepoName = 'proj'
+def agentBuildLinux = 'xxx'
+def artifactoryBrowserUrl = 'https://some.url.com'
+def softwareLabelDefault = '_XXXX.XXXX.XX'
+def swttnrDefault = '0000000000'
+def repoName ='D:/path/proj.git'
+def pathToCFGID = 'CFGPath'
+def remoteRepoUrl = 'ssh://id@url.com:0000/home/proj.git'
+def remoteRepository = 'https://some.url.com/bitbucket/etc/home/proj.git'
+def buildOutputBin = 'OP'
+def buildType = "integration"
+
+// assembled artifactory url
+def artifactoryBasePath = "${artifactoryProjectName}/${projectRepoName}/application"
+def artifactoryBrowserUrlProject = "${artifactoryBrowserUrl}/${artifactoryBasePath}"
+
+//Stage defining vairables
+def build_stage = true
+def ut_stage = true
+def axion_stage = false
+def record_stage = true
+
+@Library('JenkinsSharedLibrary') _
+def jobName = env.JOB_NAME
+
+def getProjectName(){
+    return 'proj'
+}
+project_name = getProjectName()
+
+
+
+genericPipeline([
+    record_stage: record_stage,
+    build_stage: build_stage,
+    ut_stage: ut_stage,
+    axion_stage: axion_stage,
+    //Variables
+    agentBuild: agentBuild,
+    agentBuildPathToolsGeneric: agentBuildPathToolsGeneric,
+    scmVars: scmVars,
+    artifactoryProjectName: artifactoryProjectName,
+    projectRepoName: projectRepoName,
+    agentBuildLinux: agentBuildLinux,
+    artifactoryBrowserUrl: artifactoryBrowserUrl,
+    softwareLabelDefault: softwareLabelDefault,
+    swttnrDefault: swttnrDefault,
+    repoName: repoName,
+    pathToCFGID: pathToCFGID,
+    remoteRepoUrl: remoteRepoUrl,
+    remoteRepository: remoteRepository,
+    buildOutputBin: buildOutputBin,
+    buildType: buildType,
+    jobName: jobName,
+    project_name: project_name,
+    wipeout: params.wipeout
+])

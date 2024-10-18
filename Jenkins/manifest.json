@@ -1,0 +1,14 @@
+{
+	 "toolchains": [
+		 {"name": "win",
+			 "targets": [
+				{"name": "Integration", "command":"somebat.bat"}
+			 ]
+		 },
+		 {"name": "linux",
+			 "targets": [
+			    {"name": "Buildsh", "command":"Build command"}
+			 ]
+		 }
+		]
+}
