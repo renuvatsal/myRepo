@@ -32,11 +32,11 @@ then
         then
             
             mv -f $filename ${filename}_original.txt
-            echo "Moved $filename to ${filename}_original.txt"
+            echo "Moved $filename to ${filename}_original.txt";
             cp -f ${filename}_activity_specific_file.txt $filename
-            echo "Copied ${filename}_activity_specific_file.txt to $filename"
+            echo "Copied ${filename}_activity_specific_file.txt to $filename";
         else
-            echo "File does not exist"
+            echo "File does not exist";
             exit 1
         fi
     done
@@ -46,11 +46,11 @@ then
         if [ -f $filename ]
         then
             rm -f $filename
-            echo "Removed activity specific $filename"
+            echo "Removed activity specific $filename";
             mv -f ${filename}_original.txt $filename
-            echo "Moved ${filename}_original.txt to $filename"
+            echo "Moved ${filename}_original.txt to $filename";
         else
-            echo "File does not exist"
+            echo "File does not exist";
             exit 1
         fi
     done
