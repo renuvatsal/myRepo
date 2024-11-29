@@ -1,5 +1,5 @@
 #!/bin/sh
-
+#test
 core=$1
 
 PDCCORES=("PDC1E", "PDC1F", "PDC1AB", "PDC1E_PDC1AB", "PDC1F_PDC1AB")
