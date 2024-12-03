@@ -1,0 +1,45 @@
+Docker Sample Image Creation and running:
+
+Prerequisites:
+Dockerfile
+requirements.txt (if required)
+
+Navigate to path where the above files are stored.
+
+1) Build the Docker Image:
+- docker build -t my-sample-app .
+
+2) Run the Docker Container:
+- docker run -p 4000:80 my-sample-app
+To run it in detached mode:
+- docker run -d -p 4000:80 my-sample-app
+
+3) Test your Application: 
+- Open a web browser and go to http://localhost:4000
+or run below command to get the ip address of your image
+- docker inspect <container ID>
+
+To start a docker image with YAML file:
+Prerequisites:
+/your-project should look like below:
+  |-- app.py
+  |-- Dockerfile
+  |-- requirements.txt
+  |-- docker-compose.yml
+
+1) Build and Start Your Application with Docker Compose
+To build the images specified in the compose file
+- docker-compose build
+
+To start up the application in detached mode
+- docker-compose up -d
+
+2) Verify the Running Services
+- docker-compose ps
+
+3) Others
+- docker-compose down
+- docker-compose logs
+- docker-compose logs -f web
+
+
