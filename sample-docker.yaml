@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  web:
+    image: my-web-app:latest
+    container_name: web_container
+    ports:
+      - "8080:80"
+    environment:
+      NODE_ENV: production
+      PORT: 80
+    env_file:
+      - web.env
+    volumes:
+      - ./app:/usr/src/app
+      - ./app/config:/config:ro
+    networks:
+      - frontend
+    depends_on:
+      - db
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "200k"
+        max-file: "10"
+
+  db:
+    image: postgres:13
+    container_name: db_container
+    environment:
+      POSTGRES_USER: myuser
+      POSTGRES_PASSWORD: mypassword
+      POSTGRES_DB: mydatabase
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - backend
+    restart: unless-stopped
+
+  cache:
+    image: redis:alpine
+    container_name: cache_container
+    ports:
+      - "6379:6379"
+    networks:
+      - backend
+    restart: on-failure
+    logging:
+      driver: syslog
+      options:
+        syslog-address: "tcp://192.168.0.42:123"
+
+volumes:
+  db_data:
+    driver: local
+
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+
+configs:
+  my_config:
+    file: ./config.json
+
+secrets:
+  my_secret:
+    file: ./secret.txt
