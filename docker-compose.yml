@@ -1,0 +1,12 @@
+version: '3.8'  # Specify the Compose file version
+
+services:
+  web:
+    build: .
+    ports:
+      - "4000:80"
+    # Optionally, you can specify environment variables, volumes, etc.
+    # environment:
+    #   - SOME_ENV_VAR=some_value
+    # volumes:
+    #   - "./some_path:/some_container_path"
