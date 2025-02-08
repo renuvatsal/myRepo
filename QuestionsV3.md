@@ -12,98 +12,196 @@
 - Check recent code deployments for errors, rolling back if necessary.
 - Verify recent configuration changes.
 
-### Handling SRE Questions:
+### SRE Questions with Detailed Points:
 
-1. **Diagnosing Slow Application**:
-   - Check load times and resource loading.
-   - Optimize images and JavaScript.
-   - Use CDN for static assets.
-   - Conduct tests to verify improvements.
+1. **How do you approach diagnosing a slow-loading web application?**
+   - **Issues**: Slow server response, unoptimized resources (e.g., images, JavaScript).
+   - **Checks**:
+     - **Load Times**: Compare with historical data.
+     - **Resource Loading**: Analyze large images or scripts.
+     - **Render-Blocking Resources**: Evaluate CSS/JavaScript.
+     - **Server Health**: Monitor CPU, memory.
+     - **Database Queries**: Search for long-running queries.
+   - **Resolution**:
+     - **Image Optimization**: Use compressed formats like WebP.
+     - **JavaScript/CSS Optimization**: Minify and async load resources.
+     - **CDN**: Ensure static assets are served.
 
-2. **500 Internal Server Error**:
-   - Confirm if error affects all user groups.
-   - Log errors during repro attempts.
-   - Look for unhandled exceptions or deployment issues.
+2. **What steps do you take when a web application is returning 500 Internal Server Error?**
+   - **Issues**: Code exceptions, server misconfigurations.
+   - **Checks**:
+     - **Error Occurrence**: Across browsers and devices.
+     - **Logs**: Capture application errors.
+     - **App/Config Deployment**: Verify recent changes.
+     - **Database Connectivity**: Check server issues.
+   - **Resolution**:
+     - **Code Fixes**: Handle exceptions and rollback changes.
+     - **Monitoring**: Set alerts for future errors.
 
-3. **Intermittent Downtime**:
-   - Review logs around downtime reports.
-   - Check server health metrics.
-   - Evaluate network traffic for patterns indicating attack or overload.
+3. **How would you handle a situation where users report intermittent downtime?**
+   - **Issues**: Resource saturation, network interruptions.
+   - **Checks**:
+     - **Logs**: Review around downtime.
+     - **Server Metrics**: Examine CPU, memory, network.
+     - **Traffic Analysis**: Identify spikes or DDoS.
+     - **Scheduled Jobs**: Check for resource-heavy tasks.
+     - **DNS Settings**: Verify configurations.
+   - **Resolution**:
+     - **Resource Scaling**: Adjust server capacities.
+     - **Code Optimization**: Address identified bottlenecks.
 
-4. **Security Vulnerability**:
-   - Review advisory and evaluate impact.
-   - Update library with patches.
-   - Test and conduct penetration testing.
+4. **Describe how you would resolve a security vulnerability detected in web application libraries?**
+   - **Issues**: Vulnerable libraries affecting security.
+   - **Checks**:
+     - **Security Advisory**: Review and understand vulnerability.
+     - **Impact Evaluation**: Identify affected code areas.
+   - **Resolution**:
+     - **Patch Libraries**: Update to secure versions.
+     - **Penetration Testing**: Validate vulnerability resolution.
 
-5. **API Timeout Errors**:
-   - Replicate issue in test environment.
-   - Optimize code and queries.
-   - Scale infrastructure if needed.
+5. **What method would you use to troubleshoot API timeout errors?**
+   - **Issues**: Network latency, resource limits.
+   - **Checks**:
+     - **Replication**: Test similar conditions.
+     - **Logs**: Analyze request/response details.
+     - **Server Load**: Monitor resource utilization.
+   - **Resolution**:
+     - **Code Optimization**: Streamline API processes.
+     - **Database Efficiency**: Optimize slow queries.
+     - **Scaling**: Increase server capacity.
 
-6. **Database Connectivity Issues**:
-   - Verify DB server status and configuration.
-   - Test network connections.
-   - Check resource usage and connection limits.
+6. **How do you address an issue where the web application can’t connect to the database?**
+   - **Issues**: Server downtime, network/firewall blocks.
+   - **Checks**:
+     - **DB Server Status**: Verify running state.
+     - **Network Connectivity**: Use tools like `ping`, `telnet`.
+     - **Config Settings**: Validate DB connection parameters.
+     - **Resource Usage**: Check for high utilization.
+   - **Resolution**:
+     - **Connection Limits**: Modify if hitting max connections.
+     - **FW Rules**: Adjust to allow traffic.
 
-7. **Memory Leaks**:
-   - Analyze heap snapshots for trends.
-   - Refactor code and review event listener handling.
-   - Conduct load testing post-changes.
+7. **How do you tackle memory leaks in a web application?**
+   - **Issues**: Increasing memory consumption, sluggish performance.
+   - **Checks**:
+     - **Heap Snapshots**: Capture and analyze growth patterns.
+     - **Logs**: Identify GC activity and excessive usage.
+     - **Code Review**: Look for undefined or lingering references.
+   - **Resolution**:
+     - **Event Listeners**: Properly remove unused ones.
+     - **Caching Mechanisms**: Evict data when unnecessary.
+     - **Reusable Objects**: Prevent excessive new object creation.
 
-8. **SQL Injection Vulnerability**:
-   - Identify endpoints and impact.
-   - Implement input validation and parameterized queries.
-   - Perform code review and schedule audits.
+8. **What is your process for handling a web application that is vulnerable to SQL injection?**
+   - **Issues**: UNSanitized inputs allow harmful SQL execution.
+   - **Checks**:
+     - **Vulnerable Endpoints**: Identify input fields prone to issues.
+     - **Impact Analysis**: Understand potential access or alterations.
+   - **Resolution**:
+     - **Input Validation**: Implement strict checks.
+     - **Parameterized Queries**: Use to separate data from logic.
+     - **Regular Audits**: Conduct periodic security assessments.
 
-9. **Diagnosing Microservices Performance**:
-   - Gather metrics across services.
-   - Identify bottlenecks and optimize where needed.
-   - Conduct load testing post-optimization.
+9. **How do you diagnose performance issues in a microservices architecture?**
+   - **Issues**: Inefficient service coordination, resource contention.
+   - **Checks**:
+     - **Metrics Gathering**: Identify latency/throughput bottlenecks.
+     - **Request Flow**: Trace to find delays.
+     - **Service-Specific Logs**: Check for errors/retries.
+     - **Network Latency**: Evaluate inter-service communication.
+   - **Resolution**:
+     - **Service Optimization**: Refactor bottlenecks.
+     - **Infrastructure Scaling**: Increase resources for heavy services.
+     - **End-to-End Testing**: Validate interactions post-optimization.
 
-10. **CSS Not Loading**:
-    - Check console and network tab for errors.
-    - Verify file paths and server configurations.
-    - Clear caches or CDN issues.
+10. **How do you handle CSS not loading on the web page?**
+    - **Issues**: Incorrect paths, server permission issues.
+    - **Checks**:
+      - **Console/Network Tab**: Look for loading errors.
+      - **Direct Access**: Attempt to reach CSS files directly.
+      - **Server Logs**: Check for access/permission errors.
+    - **Resolution**:
+      - **Path Corrections**: Update links in HTML.
+      - **File Permissions**: Adjust for readability by the server.
+      - **CDN Config**: Ensure proper file propagation.
 
-11. BottleNeck:
-    Definition: A bottleneck is a point in a system that limits overall output because it's operating at full capacity.
-    Example: In a car manufacturing line, if the painting stage is slower than others, it delays the entire process, reducing production rates.
+11. **BottleNeck**
+    - **Issues**: Process stages slower than subsequent stages.
+    - **Checks**:
+      - **Monitor Stages**: Identify which is causing delays.
+      - **Resource Allocation**: Evaluate current distribution.
+    - **Resolution**:
+      - **Add Resources**: Allocate additional resources to slow stages.
+      - **Optimize Processes**: Increase efficiency or upgrade tools.
 
-12. Default Ports:
-    MySQL Database: Port 3306
-    MongoDB: Port 27017
-    Oracle Database: Port 1521
+12. **Default Ports**
+    - **MySQL**: Port 3306
+    - **MongoDB**: Port 27017
+    - **Oracle Database**: Port 1521
 
-13. Check Database Connectivity:
-    Telnet: telnet [hostname] [port]
-    Netcat: nc -zv [hostname] [port]
-    PowerShell: Test-NetConnection -ComputerName [hostname] -Port [port]
-    Ping: ping [hostname] for server reachability.
+13. **How to Check App Connectivity to DB?**
+    - **Issues**: Incorrect port configurations or Firewall blocks.
+    - **Checks**:
+      - **Tools**: Use `telnet`, `nc`, `ping` for testing.
+      - **Config Verification**: Ensure DB settings are correct.
+    - **Resolution**:
+      - **Adjust Configs**: Correct any misconfigurations.
+      - **Firewalls**: Ensure access rules permit connections.
 
-14. Garbage Collector:
-    Definition: Automatically manages memory by collecting and freeing unused resources to prevent leaks.
-    Example: Java's JVM uses garbage collection to clear unreachable objects, optimizing memory.
+14. **Garbage Collector**
+    - **Issues**: Inefficient memory reclamation leads to performance drops.
+    - **Checks**:
+      - **Heap Analysis**: Identify uncollected objects.
+      - **Logs**: Review garbage collection frequency/impact.
+    - **Resolution**:
+      - **Optimize Code**: Ensure release of unused objects.
+      - **Adjust GC Settings**: Tune GC parameters if needed.
 
-15. SQL Injection:
-    How It Works: An attacker inserts malicious SQL into queries through unsanitized input fields, potentially accessing or manipulating database data.
-    Example: Inputting OR '1'='1' in a login form bypasses authentication if not properly handled.
+15. **SQL Injection**
+    - **Issues**: Malicious input alters database queries.
+    - **Checks**:
+      - **Endpoint Security**: Identify points without validation.
+      - **Query Safety**: Analyze for direct input usage.
+    - **Resolution**:
+      - **Input Sanitization**: Enforce strong checks.
+      - **Use ORM/Parameterized Queries**: Prevent manipulation through embedded data.
 
-16. Penetration Testing:
-    Definition: A simulated cyberattack to identify and exploit vulnerabilities within systems, to improve security.
-    Types: Black Box (no prior knowledge), White Box (full knowledge), Gray Box (partial knowledge).
+16. **Penetration Testing**
+    - **Issues**: Discover potential security vulnerabilities.
+    - **Checks**:
+      - **Types**: Use black box, white box, or gray box testing.
+      - **Impact Assessment**: Analyze potential breach consequences.
+    - **Resolution**:
+      - **Patch Vulnerabilities**: Apply fixes as recommended.
+      - **Regular Testing**: Schedule ongoing assessments.
 
-17. Load Testing:
-    Definition: Assesses an application's performance under expected and peak loads.
-    Metrics: Measures response time, throughput, resource utilization, and error rates.
+17. **Load Testing**
+    - **Issues**: Performance issues at peak loads.
+    - **Checks**:
+      - **Metrics**: Measure response time, throughput.
+      - **Error Rates**: Identify operation failures.
+    - **Resolution**:
+      - **Optimize System**: Address identified performance bottlenecks.
+      - **Capacity Planning**: Ensure resources meet stress conditions.
 
-18. DDoS Attacks:
-    Definition: A malicious attempt to overwhelm a server/service with traffic from multiple sources, disrupting normal operations.
-    Mitigation Strategies: Use of scalable infrastructure, DDoS protection services, rate limiting, and network monitoring tools.
+18. **DDoS Attacks**
+    - **Issues**: Service disruption due to excessive traffic.
+    - **Checks**:
+      - **Traffic Analysis**: Detect abnormal spikes.
+      - **Resource Utilization**: Assess bandwidth and CPU load.
+    - **Resolution**:
+      - **Rate Limiting**: Implement restrictions per user/IP.
+      - **Mitigation Services**: Use DDoS protection solutions.
 
-19. Memory Leak:
-    Definition: Occurs when a program fails to release memory, eventually causing slowdowns or crashes.
-    Impact: Over time, memory leaks reduce performance as they consume resources unnecessarily.
-
+19. **Memory Leak**
+    - **Issues**: Unreleased memory leading to system exhaustion.
+    - **Checks**:
+      - **Monitoring**: Observe persistent memory usage increase.
+      - **Heap Dumps**: Analyze for uncollected resources.
+    - **Resolution**:
+      - **Code Review**: Resolve lingering references.
+      - **Optimize Resource Handling**: Free memory post-use.
+     
 ### Deployment Questions:
 
 1. **Big Bang Deployment**:
