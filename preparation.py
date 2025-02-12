@@ -60,6 +60,12 @@ c=34
 cli=[i for i in Numlist[0:c]]
 print(cli)
 
+Numlist=list(range(1,101))
+n=10
+
+for i in range(0,len(Numlist),n):
+    print([Numlist[j] for j in range(i,i+n)])
+
 '''import decimal
 string='5'
 integer=5
