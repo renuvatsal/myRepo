@@ -1,4 +1,4 @@
-
+### BASICS
 1. **Basic Queries:**
    - **Write a SQL query to select all columns from a table named `Employees`.**
      ```sql
@@ -181,4 +181,221 @@
       MODIFY COLUMN department_id INT NOT NULL;
       ```
 
-These answers should provide a strong base for understanding the thought process and techniques in SQL querying. Tableau SQL questions like `EXCEPT` might vary slightly based on the specific RDBMS syntactic conventions.
+### ADVANCED
+
+### Scenario 1: Employee Salaries by Department
+**Scenario:** Identify the highest, lowest, and average salary within each department and display these alongside the department name. Order the results by average salary in descending order.
+**Query:**
+
+```sql
+SELECT 
+    Departments.department_name,
+    MAX(Employees.salary) AS highest_salary,
+    MIN(Employees.salary) AS lowest_salary,
+    AVG(Employees.salary) AS average_salary
+FROM 
+    Employees
+JOIN 
+    Departments ON Employees.department_id = Departments.id
+GROUP BY 
+    Departments.department_name
+ORDER BY 
+    average_salary DESC;
+```
+
+### Scenario 2: Department Employee Distribution
+**Scenario:** For each department, determine the percentage of total employees company-wide that belong to that department. Display the department name and the percentage, rounded to two decimal places.
+**Query:**
+
+```sql
+SELECT 
+    Departments.department_name,
+    ROUND((COUNT(Employees.id) * 100.0) / (SELECT COUNT(*) FROM Employees), 2) AS percentage_of_total
+FROM 
+    Employees
+JOIN 
+    Departments ON Employees.department_id = Departments.id
+GROUP BY 
+    Departments.department_name;
+```
+
+### Scenario 3: Salary Budget Comparison
+**Scenario:** For departments where the average salary exceeds the overall company's average salary, list the department names and their average salaries. Order them by the salary difference from the company's average, in descending order.
+**Query:**
+
+```sql
+WITH AvgCompanySalary AS (
+    SELECT AVG(salary) AS company_average_salary FROM Employees
+)
+SELECT 
+    Departments.department_name,
+    AVG(Employees.salary) AS average_salary
+FROM 
+    Employees
+JOIN 
+    Departments ON Employees.department_id = Departments.id
+GROUP BY 
+    Departments.department_name
+HAVING 
+    AVG(Employees.salary) > (SELECT company_average_salary FROM AvgCompanySalary)
+ORDER BY 
+    AVG(Employees.salary) - (SELECT company_average_salary FROM AvgCompanySalary) DESC;
+```
+
+### Scenario 4: Recent Hires
+**Scenario:** Display the names and department names of employees hired in the last 6 months. Ensure that the list is ordered by hire date, showing the most recent hires first.
+**Query:**
+
+```sql
+SELECT 
+    Employees.name,
+    Departments.department_name,
+    Employees.hire_date
+FROM 
+    Employees
+JOIN 
+    Departments ON Employees.department_id = Departments.id
+WHERE 
+    Employees.hire_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+ORDER BY 
+    Employees.hire_date DESC;
+```
+
+### Scenario 5: Departments with Employee Count Range
+**Scenario:** List departments with employee counts between 10 and 50, inclusive. Provide the department name and the number of employees.
+**Query:**
+
+```sql
+SELECT 
+    Departments.department_name,
+    COUNT(Employees.id) AS employee_count
+FROM 
+    Employees
+JOIN 
+    Departments ON Employees.department_id = Departments.id
+GROUP BY 
+    Departments.department_name
+HAVING 
+    employee_count BETWEEN 10 AND 50;
+```
+
+### Scenario 6: Senior Employees in Each Department
+**Scenario:** For each department, list the names of the top 3 highest-paid employees. Include their salaries, and order them by salary descending within each department.
+**Query:**
+
+```sql
+SELECT 
+    e.name, 
+    d.department_name, 
+    e.salary
+FROM 
+    Employees e
+JOIN 
+    Departments d ON e.department_id = d.id
+WHERE 
+    (SELECT COUNT(*) 
+     FROM Employees e2 
+     WHERE e2.department_id = e.department_id AND e2.salary > e.salary) < 3
+ORDER BY 
+    d.department_name, e.salary DESC;
+```
+
+### Scenario 7: Department Budget Overview
+**Scenario:** Calculate the total salary budget for each department and list departments where the budget exceeds $500,000. Display the department name and total budget, and order by budget in descending order.
+**Query:**
+
+```sql
+SELECT 
+    Departments.department_name,
+    SUM(Employees.salary) AS total_budget
+FROM 
+    Employees
+JOIN 
+    Departments ON Employees.department_id = Departments.id
+GROUP BY 
+    Departments.department_name
+HAVING 
+    total_budget > 500000
+ORDER BY 
+    total_budget DESC;
+```
+
+### Scenario 8: Employee Turnover Rate
+**Scenario:** For each department, calculate and display the employee turnover rate over the last year, given information on hires and terminations. Present the department name alongside the turnover rate.
+**Query:**
+
+```sql
+WITH TurnoverData AS (
+    SELECT 
+        department_id,
+        COUNT(CASE WHEN termination_date IS NOT NULL AND termination_date >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR) THEN 1 END) AS terminations,
+        COUNT(CASE WHEN hire_date >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR) THEN 1 END) AS hires
+    FROM 
+        Employees
+    GROUP BY 
+        department_id
+)
+SELECT 
+    Departments.department_name,
+    (terminations / GREATEST(hires, 1)) * 100 AS turnover_rate
+FROM 
+    TurnoverData
+JOIN 
+    Departments ON TurnoverData.department_id = Departments.id;
+```
+
+### Scenario 9: Departmental Salary Allocation
+**Scenario:** Display each department's name along with a breakdown of the total salary allocation into four quartiles (Q1-Q4). Order the results alphabetically by department name.
+**Query:**
+
+```sql
+SELECT 
+    department_name,
+    MIN(CASE WHEN quartile = 1 THEN salary END) AS Q1,
+    MIN(CASE WHEN quartile = 2 THEN salary END) AS Q2,
+    MIN(CASE WHEN quartile = 3 THEN salary END) AS Q3,
+    MIN(CASE WHEN quartile = 4 THEN salary END) AS Q4
+FROM (
+    SELECT 
+        d.department_name,
+        e.salary,
+        NTILE(4) OVER (PARTITION BY e.department_id ORDER BY e.salary) AS quartile
+    FROM 
+        Employees e
+    JOIN 
+        Departments d ON e.department_id = d.id
+) sub
+GROUP BY 
+    department_name
+ORDER BY 
+    department_name;
+```
+
+### Scenario 10: Promotable Employees
+**Scenario:** Identify employees in each department who have a salary in the top 5% within their department. List their names, current salary, and department name, ordering by department name first and salary second.
+**Query:**
+
+```sql
+WITH SalaryPercentiles AS (
+    SELECT 
+        department_id,
+        salary,
+        NTILE(100) OVER (PARTITION BY department_id ORDER BY salary DESC) AS percentile
+    FROM 
+        Employees
+)
+SELECT 
+    e.name,
+    e.salary,
+    d.department_name
+FROM 
+    Employees e
+JOIN 
+    SalaryPercentiles sp ON e.department_id = sp.department_id AND e.salary = sp.salary
+JOIN 
+    Departments d ON e.department_id = d.id
+WHERE 
+    sp.percentile <= 5
+ORDER BY 
+    d.department_name, e.salary DESC;
+```
