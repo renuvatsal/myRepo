@@ -1,309 +1,320 @@
-#!/usr/bin/env python3
-
-import argparse
-import logging
-import os
 import sys
+import getopt
+import os
 import time
+import signal
+import threading
 from datetime import datetime
-from pathlib import Path
-from logging.handlers import RotatingFileHandler
-
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
-# Define a constant for the log rotation size (e.g., 10MB)
-LOG_ROTATION_BYTES = 10 * 1024 * 1024
-LOG_BACKUP_COUNT = 5
-
 class KubernetesLogCollector:
     """
-    A class to collect logs from specified pods in a Kubernetes namespace.
+    Collects logs from specified pods in a Kubernetes namespace.
     """
+    def __init__(self, kubeconfig, namespace, selector, output_dir, container, since, tail, follow, previous):
+        """
+        Initializes the KubernetesLogCollector.
+        """
+        self.kubeconfig = kubeconfig
+        self.namespace = namespace
+        self.selector = selector
+        self.output_dir = output_dir
+        self.target_container = container
+        self.since_seconds = self._parse_since(since) if since else None
+        self.tail_lines = tail
+        self.follow = follow
+        self.previous = previous
+        self.api_client = self._get_api_client()
+        self.core_v1 = client.CoreV1Api(self.api_client)
+        self.active_handlers = {}
+        # Use a lock for thread-safe access to active_handlers
+        self.handler_lock = threading.Lock()
+        signal.signal(signal.SIGINT, self._handle_shutdown)
+        signal.signal(signal.SIGTERM, self._handle_shutdown)
 
-    def __init__(self, **kwargs):
-        """
-        Initializes the log collector with configuration from command-line arguments.
-        """
-        self.namespace = kwargs.get('namespace')
-        self.selector = kwargs.get('selector')
-        self.output_dir = Path(kwargs.get('output_dir'))
-        self.kubeconfig = kwargs.get('kubeconfig')
-        self.container = kwargs.get('container')
-        self.since = kwargs.get('since')
-        self.tail = kwargs.get('tail')
-        self.follow = kwargs.get('follow')
-        self.previous = kwargs.get('previous')
-        self.api_client = None
-        self.core_v1_api = None
-        self.active_handlers =
-
-    def _setup_kubernetes_client(self):
-        """
-        Sets up the Kubernetes API client, trying in-cluster config first,
-        then falling back to kubeconfig.
-        """
+    def _parse_since(self, since_str):
+        """Converts a duration string (e.g., 10s, 5m, 1h) to seconds."""
         try:
-            config.load_incluster_config()
-            print("INFO: Authenticated using in-cluster service account.")
-        except config.ConfigException:
-            try:
-                config.load_kube_config(config_file=self.kubeconfig)
-                print("INFO: Authenticated using kubeconfig file.")
-            except config.ConfigException as e:
-                print(f"ERROR: Could not authenticate with Kubernetes. {e}", file=sys.stderr)
+            val = int(since_str[:-1])
+            unit = since_str[-1].lower()
+            if unit == 's':
+                return val
+            elif unit == 'm':
+                return val * 60
+            elif unit == 'h':
+                return val * 3600
+            else:
+                print(f"Error: Invalid time unit in --since '{since_str}'. Use 's', 'm', or 'h'.", file=sys.stderr)
                 sys.exit(1)
-        
-        self.api_client = client.ApiClient()
-        self.core_v1_api = client.CoreV1Api(self.api_client)
-
-    def _validate_cluster_connection(self):
-        """
-        Performs a lightweight API call to validate the connection to the cluster.
-        """
-        try:
-            self.core_v1_api.get_api_resources()
-            print("INFO: Successfully connected to the Kubernetes API server.")
-        except ApiException as e:
-            print(f"ERROR: Failed to connect to Kubernetes API server. Status: {e.status}, Reason: {e.reason}", file=sys.stderr)
-            sys.exit(1)
-        except Exception as e:
-            print(f"ERROR: An unexpected error occurred while validating cluster connection: {e}", file=sys.stderr)
+        except (ValueError, IndexError):
+            print(f"Error: Invalid format for --since '{since_str}'. Use format like '10s', '5m', '1h'.", file=sys.stderr)
             sys.exit(1)
 
-    def _validate_output_directory(self):
-        """
-        Validates that the output directory exists and is writable.
-        Attempts to create it if it does not exist.
-        """
+    def _get_api_client(self):
+        """Initializes and returns a Kubernetes API client."""
         try:
-            self.output_dir.mkdir(parents=True, exist_ok=True)
-            # Test writability by creating a temporary file
-            test_file = self.output_dir / ".k8slogtest"
-            test_file.touch()
-            test_file.unlink()
-            print(f"INFO: Output directory '{self.output_dir}' is valid and writable.")
-        except OSError as e:
-            print(f"ERROR: Output directory '{self.output_dir}' is not writable or could not be created: {e}", file=sys.stderr)
+            if self.kubeconfig:
+                config.load_kube_config(config_file=self.kubeconfig)
+            else:
+                config.load_kube_config()
+            return client.ApiClient()
+        except config.ConfigException as e:
+            print(f"Error: Could not configure Kubernetes client. {e}", file=sys.stderr)
             sys.exit(1)
 
-    def _find_target_pods(self):
-        """
-        Finds pods matching the label selector in the specified namespace.
-        Validates that the namespace exists and that at least one pod is found.
-        """
+    def _validate_inputs(self):
+        """Validates inputs and environment."""
+        print("1. Validating inputs...")
         try:
-            # 1. Check if namespace exists
-            self.core_v1_api.read_namespace(name=self.namespace)
+            self.core_v1.read_namespace(name=self.namespace)
+            print(f"   - Namespace '{self.namespace}' found.")
         except ApiException as e:
             if e.status == 404:
-                print(f"ERROR: Namespace '{self.namespace}' not found.", file=sys.stderr)
+                print(f"Error: Namespace '{self.namespace}' not found.", file=sys.stderr)
             else:
-                print(f"ERROR: Could not access namespace '{self.namespace}'. Status: {e.status}, Reason: {e.reason}", file=sys.stderr)
+                print(f"Error connecting to Kubernetes API: {e}", file=sys.stderr)
             sys.exit(1)
 
         try:
-            # 2. Find pods by label selector
-            pod_list = self.core_v1_api.list_namespaced_pod(
+            if not os.path.exists(self.output_dir):
+                os.makedirs(self.output_dir, exist_ok=True)
+            if not os.access(self.output_dir, os.W_OK):
+                print(f"Error: Output directory '{self.output_dir}' is not writable.", file=sys.stderr)
+                sys.exit(1)
+            print(f"   - Output directory '{self.output_dir}' is valid and writable.")
+        except OSError as e:
+            print(f"Error creating or accessing output directory '{self.output_dir}': {e}", file=sys.stderr)
+            sys.exit(1)
+        print("   - Validation successful.")
+
+    def _find_pods(self):
+        """Finds pods based on the label selector."""
+        print(f"\n2. Searching for pods with selector '{self.selector}' in namespace '{self.namespace}'...")
+        try:
+            pods = self.core_v1.list_namespaced_pod(
                 namespace=self.namespace,
                 label_selector=self.selector
             )
-            if not pod_list.items:
-                print(f"INFO: No pods found matching selector '{self.selector}' in namespace '{self.namespace}'. Exiting.")
+            if not pods.items:
+                print("   - No pods found matching the selector. Exiting gracefully.")
                 sys.exit(0)
-            
-            print(f"INFO: Found {len(pod_list.items)} pod(s) matching selector '{self.selector}'.")
-            return pod_list.items
+            print(f"   - Found {len(pods.items)} pod(s).")
+            return pods.items
         except ApiException as e:
-            print(f"ERROR: Could not list pods. Status: {e.status}, Reason: {e.reason}", file=sys.stderr)
+            print(f"Error fetching pods: {e}", file=sys.stderr)
             sys.exit(1)
-            
+
     def _get_output_path(self, pod_name, container_name, is_previous=False):
-        """
-        Constructs the full, timestamped path for a log file.
-        """
-        timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+        """Creates the directory structure and returns the full log file path."""
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         suffix = "_previous" if is_previous else ""
         filename = f"{container_name}{suffix}_{timestamp}.log"
-        
-        path = self.output_dir / self.namespace / pod_name
-        path.mkdir(parents=True, exist_ok=True)
-        return path / filename
-
-    def _fetch_and_store_logs(self, pod, container):
-        """
-        Fetches logs for a single container and stores them.
-        Handles both batch and streaming modes.
-        """
-        pod_name = pod.metadata.name
-        container_name = container.name
-
-        print(f"INFO: Processing container '{container_name}' in pod '{pod_name}'...")
-
-        if self.follow:
-            self._stream_logs_with_rotation(pod_name, container_name)
-        else:
-            self._batch_fetch_logs(pod_name, container_name)
-            if self.previous:
-                self._batch_fetch_logs(pod_name, container_name, is_previous=True)
+        log_dir = os.path.join(self.output_dir, self.namespace, pod_name)
+        os.makedirs(log_dir, exist_ok=True)
+        return os.path.join(log_dir, filename)
 
     def _batch_fetch_logs(self, pod_name, container_name, is_previous=False):
-        """
-        Performs a one-time fetch of logs for a container.
-        """
-        output_path = self._get_output_path(pod_name, container_name, is_previous)
+        """Performs a one-time fetch of logs for a container."""
+        log_file_path = self._get_output_path(pod_name, container_name, is_previous)
         log_type = "previous" if is_previous else "current"
-        
+        print(f"   - Fetching {log_type} logs for {pod_name}/{container_name}...")
+
         try:
-            logs = self.core_v1_api.read_namespaced_pod_log(
+            logs_str = self.core_v1.read_namespaced_pod_log(
                 name=pod_name,
                 namespace=self.namespace,
                 container=container_name,
                 previous=is_previous,
-                since_seconds=self._parse_since(),
-                tail_lines=self.tail,
-                _preload_content=True  # Batch mode, load all content
+                since_seconds=self.since_seconds,
+                tail_lines=self.tail_lines,
+                _preload_content=True  # For batch, get content as a string
             )
-            
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(logs)
-            print(f"  -> Saved {log_type} logs to '{output_path}'")
+            with open(log_file_path, 'w', encoding='utf-8') as f:
+                f.write(logs_str)
+            print(f"     - Saved to {log_file_path}")
         except ApiException as e:
             if is_previous and e.status == 400:
-                # This is expected if a container has never restarted.
-                print(f"  -> INFO: No previous container instance found for '{container_name}'.")
+                print(f"     - INFO: No previous container instance found for '{container_name}'. Skipping.")
             else:
-                print(f"  -> ERROR: Failed to fetch {log_type} logs for '{container_name}'. Status: {e.status}, Reason: {e.reason}", file=sys.stderr)
+                print(f"     - ERROR fetching logs for {pod_name}/{container_name}: {e.reason}", file=sys.stderr)
+        except Exception as e:
+            print(f"     - An unexpected error occurred for {pod_name}/{container_name}: {e}", file=sys.stderr)
 
-    def _stream_logs_with_rotation(self, pod_name, container_name):
-        """
-        Streams logs in real-time and uses RotatingFileHandler for storage.
-        """
-        output_path = self._get_output_path(pod_name, container_name)
-        
-        # Setup a dedicated logger for this stream
-        logger_name = f"k8s.{self.namespace}.{pod_name}.{container_name}"
-        logger = logging.getLogger(logger_name)
-        logger.setLevel(logging.INFO)
-        # Prevent propagation to root logger to avoid duplicate console output
-        logger.propagate = False
-        
-        # Use RotatingFileHandler for automatic rotation by size
-        handler = RotatingFileHandler(
-            output_path,
-            maxBytes=LOG_ROTATION_BYTES,
-            backupCount=LOG_BACKUP_COUNT
-        )
-        # Use a simple formatter that just outputs the message
-        handler.setFormatter(logging.Formatter('%(message)s'))
-        logger.addHandler(handler)
-        self.active_handlers.append(handler)
-        
-        print(f"  -> Streaming logs to '{output_path}' (rotation at {LOG_ROTATION_BYTES / 1024**2:.1f} MB)...")
-        
+    def _stream_logs(self, pod_name, container_name):
+        """Streams logs in real-time for a single container."""
+        log_file_path = self._get_output_path(pod_name, container_name)
+        print(f"   - Streaming logs for {pod_name}/{container_name} to {log_file_path}...")
+        log_stream = None
         try:
-            log_stream = self.core_v1_api.read_namespaced_pod_log(
+            log_stream = self.core_v1.read_namespaced_pod_log(
                 name=pod_name,
                 namespace=self.namespace,
                 container=container_name,
                 follow=True,
-                tail_lines=self.tail,
-                _preload_content=False  # Crucial for streaming
+                since_seconds=self.since_seconds,
+                tail_lines=self.tail_lines,
+                _preload_content=False  # Must be False for streaming
             )
-            
-            for line in log_stream.stream():
-                logger.info(line.decode('utf-8').strip())
-        
-        except ApiException as e:
-            print(f"  -> ERROR: API error while streaming logs for '{container_name}'. Status: {e.status}, Reason: {e.reason}", file=sys.stderr)
-        finally:
-            log_stream.release_conn()
+            with open(log_file_path, 'w', encoding='utf-8') as f:
+                with self.handler_lock:
+                    self.active_handlers[log_file_path] = f
+                
+                for line in log_stream:
+                    f.write(line.decode('utf-8', errors='ignore'))
+                    f.flush()
 
-    def _parse_since(self):
-        """
-        Converts a time duration string (e.g., 1h, 10m, 30s) to seconds.
-        Returns None if self.since is not set.
-        """
-        if not self.since:
-            return None
-        
-        total_seconds = 0
-        self.since = self.since.lower()
-        
-        if 'h' in self.since:
-            total_seconds += int(self.since.split('h')) * 3600
-        if 'm' in self.since:
-            total_seconds += int(self.since.split('m').split('h')[-1]) * 60
-        if 's' in self.since:
-            total_seconds += int(self.since.split('s').split('m')[-1])
-            
-        return total_seconds if total_seconds > 0 else None
+        except ApiException as e:
+            print(f"   - ERROR streaming logs for {pod_name}/{container_name}: {e.reason}", file=sys.stderr)
+        except Exception as e:
+            # This can happen if the thread is interrupted during shutdown
+            if not isinstance(e, KeyboardInterrupt):
+                print(f"   - An unexpected error occurred while streaming {pod_name}/{container_name}: {e}", file=sys.stderr)
+        finally:
+            with self.handler_lock:
+                if log_file_path in self.active_handlers:
+                    self.active_handlers[log_file_path].close()
+                    del self.active_handlers[log_file_path]
+            if log_stream:
+                log_stream.release_conn()
+            print(f"   - Stream ended for {pod_name}/{container_name}.")
+
+    def _handle_shutdown(self, signum, frame):
+        """Gracefully shuts down on SIGINT/SIGTERM."""
+        print("\nShutdown signal received. Closing all log files...")
+        with self.handler_lock:
+            for path, handler in self.active_handlers.items():
+                print(f"   - Closing {path}")
+                handler.close()
+            self.active_handlers.clear()
+        print("Shutdown complete.")
+        sys.exit(0)
 
     def run(self):
-        """
-        Main execution method to orchestrate the log collection process.
-        """
-        try:
-            self._validate_output_directory()
-            self._setup_kubernetes_client()
-            self._validate_cluster_connection()
-            
-            target_pods = self._find_target_pods()
-            
-            for pod in target_pods:
-                containers = pod.spec.containers
-                if self.container:
-                    # Filter for the specified container
-                    containers = [c for c in containers if c.name == self.container]
-                    if not containers:
-                        print(f"WARNING: Container '{self.container}' not found in pod '{pod.metadata.name}'. Skipping pod.", file=sys.stderr)
-                        continue
-                
-                for container in containers:
-                    self._fetch_and_store_logs(pod, container)
-            
-            if self.follow:
-                print("\nINFO: Streaming logs. Press Ctrl+C to stop.")
-                while True:
-                    time.sleep(1) # Keep the main thread alive while streams run
+        """Main execution method."""
+        self._validate_inputs()
+        pods = self._find_pods()
+        threads = []
 
-        except KeyboardInterrupt:
-            print("\nINFO: Shutdown signal received, cleaning up...")
-        finally:
-            print("INFO: Closing all open file handlers and connections.")
-            for handler in self.active_handlers:
-                handler.close()
-            if self.api_client:
-                self.api_client.close()
-            sys.exit(0)
+        print("\n3. Starting log collection...")
+        for pod in pods:
+            pod_name = pod.metadata.name
+            print(f"\nProcessing pod: {pod_name}")
+            
+            containers_to_process = pod.spec.containers
+            if self.target_container:
+                filtered_containers = [c for c in containers_to_process if c.name == self.target_container]
+                if not filtered_containers:
+                    print(f"   - Warning: Specified container '{self.target_container}' not found in pod '{pod_name}'. Skipping.")
+                    continue
+                containers_to_process = filtered_containers
+            
+            for container in containers_to_process:
+                if self.follow:
+                    if self.previous:
+                        print("   - Warning: --previous flag is ignored when --follow is used.")
+                    thread = threading.Thread(target=self._stream_logs, args=(pod_name, container.name))
+                    threads.append(thread)
+                    thread.start()
+                else:
+                    self._batch_fetch_logs(pod_name, container.name, is_previous=False)
+                    if self.previous:
+                        self._batch_fetch_logs(pod_name, container.name, is_previous=True)
+        
+        if self.follow:
+            print("\nAll log streams started. Press Ctrl+C to stop.")
+            try:
+                for t in threads:
+                    t.join()
+            except KeyboardInterrupt:
+                self._handle_shutdown(None, None)
 
-def main():
-    """
-    Parses command-line arguments and runs the log collector.
-    """
-    parser = argparse.ArgumentParser(
-        description="A robust script to collect logs from Kubernetes pods."
+        print("\nLog collection process finished.")
+
+def parse_args(argv):
+    """Parses command-line arguments using getopt."""
+    kubeconfig = None
+    namespace = None
+    selector = None
+    output_dir = None
+    container = None
+    since = None
+    tail = None
+    follow = False
+    previous = False
+
+    short_opts = "n:s:o:c:"
+    long_opts = [
+        "kubeconfig=", "namespace=", "selector=", "output-dir=", 
+        "container=", "since=", "tail=", "follow", "previous"
+    ]
+    
+    help_str = (
+        "Usage: python log_collector.py --namespace <ns> --selector <sel> --output-dir <dir> [options]\n\n"
+        "Required:\n"
+        "  --namespace/-n   Kubernetes namespace\n"
+        "  --selector/-s    Label selector (e.g., 'app=my-api')\n"
+        "  --output-dir/-o  Output directory for logs\n\n"
+        "Optional:\n"
+        "  --kubeconfig     Path to kubeconfig file (defaults to standard locations)\n"
+        "  --container/-c   Specific container name to collect from\n"
+        "  --since          Fetch logs since a duration (e.g., 10s, 5m, 1h)\n"
+        "  --tail           Fetch the last N lines of logs\n"
+        "  --follow         Stream logs in real-time\n"
+        "  --previous       Fetch logs from previous, terminated containers\n"
     )
-    
-    # Required arguments
-    parser.add_argument('--namespace', required=True, help="The Kubernetes namespace to operate in.")
-    parser.add_argument('--selector', required=True, help="Kubernetes label selector (e.g., 'app=my-api,env=production').")
-    parser.add_argument('--output-dir', required=True, help="The local or shared directory to store log files.")
-    
-    # Optional arguments
-    parser.add_argument('--kubeconfig', help="Path to the Kubernetes configuration file. Defaults to standard locations.")
-    parser.add_argument('--container', help="Specify a single container name to collect logs from. If omitted, collects from all containers.")
-    parser.add_argument('--since', help="A time duration string (e.g., 1h, 10m, 30s) to fetch logs from the recent past.")
-    parser.add_argument('--tail', type=int, help="Fetch only the last N lines of logs.")
-    
-    # Boolean flags
-    parser.add_argument('--follow', action='store_true', help="Stream logs in real-time until manually terminated.")
-    parser.add_argument('--previous', action='store_true', help="Collect logs from previously terminated containers (due to crashes or restarts).")
-    
-    args = parser.parse_args()
-    
-    collector = KubernetesLogCollector(**vars(args))
-    collector.run()
+
+    try:
+        opts, args = getopt.getopt(argv, short_opts, long_opts)
+    except getopt.GetoptError as e:
+        print(f"Argument Error: {e}\n\n{help_str}", file=sys.stderr)
+        sys.exit(2)
+
+    for opt, arg in opts:
+        if opt == '--kubeconfig':
+            kubeconfig = arg
+        elif opt in ("-n", "--namespace"):
+            namespace = arg
+        elif opt in ("-s", "--selector"):
+            selector = arg
+        elif opt in ("-o", "--output-dir"):
+            output_dir = arg
+        elif opt in ("-c", "--container"):
+            container = arg
+        elif opt == '--since':
+            since = arg
+        elif opt == '--tail':
+            try:
+                tail = int(arg)
+            except ValueError:
+                print("Error: --tail argument must be an integer.", file=sys.stderr)
+                sys.exit(2)
+        elif opt == '--follow':
+            follow = True
+        elif opt == '--previous':
+            previous = True
+
+    if not all([namespace, selector, output_dir]):
+        print(f"Missing one or more required arguments.\n\n{help_str}", file=sys.stderr)
+        sys.exit(2)
+
+    return kubeconfig, namespace, selector, output_dir, container, since, tail, follow, previous
 
 if __name__ == "__main__":
-    main()
+    try:
+        kubeconfig, namespace, selector, output_dir, container, since, tail, follow, previous = parse_args(sys.argv[1:])
+        collector = KubernetesLogCollector(
+            kubeconfig=kubeconfig,
+            namespace=namespace,
+            selector=selector,
+            output_dir=output_dir,
+            container=container,
+            since=since,
+            tail=tail,
+            follow=follow,
+            previous=previous
+        )
+        collector.run()
+    except KeyboardInterrupt:
+        print("\nProcess interrupted by user. Exiting.")
+        sys.exit(0)
