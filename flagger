@@ -1,0 +1,464 @@
+A Declarative Blueprint for Progressive Delivery: Integrating Flagger, ArgoCD, and Sysdig on OpenShift
+I. Executive Overview: A Blueprint for Progressive Delivery on OpenShift with Sysdig
+This report provides an exhaustive, end-to-end architectural blueprint for deploying the Flagger progressive delivery operator onto an OpenShift Container Platform cluster. The solution is specifically engineered to satisfy a complex set of enterprise-grade requirements, including a GitOps-native deployment via ArgoCD , declarative configuration management using a Kustomize base and overlay structure , and integration with a private container registry for the Flagger operator image.
+The primary technical challenges addressed herein are the integration of non-default systems specified by these requirements. Standard documentation frequently fails to address the intersection of these specific tools. This blueprint provides the definitive integration model for three disparate, enterprise-grade systems:
+Flagger's progressive delivery orchestration logic.
+OpenShift's restrictive, security-first posture, specifically its Security Context Constraints (SCCs), which block default installations.
+Sysdig's centralized observability platform, which replaces the default Prometheus metrics provider and necessitates a custom, authenticated API integration.
+The solution provided is fully declarative and auditable, designed for integration into a pre-existing, hardened CI/CD and security environment. It bridges the significant documentation gaps between these federated systems, resulting in a robust, maintainable, and GitOps-managed Flagger installation.
+II. Analysis of Core Dependencies and Prerequisites
+The user query specified that all dependencies for Flagger to run smoothly must be included. Flagger is a Kubernetes operator that functions as an orchestrator ; it does not operate in a vacuum and relies on several external systems to perform its duties. The following prerequisites are mandatory for the successful implementation of this blueprint.
+Prerequisite 1: The Traffic Router (Service Mesh)
+Flagger automates progressive delivery (e.g., Canary, Blue/Green) by manipulating traffic routing. It cannot function without a compatible service mesh or ingress controller to which it can issue routing commands.
+This guide will standardize on Istio as the service mesh, as it is fully supported by Flagger and its integration patterns are well-documented.
+Actionable Requirement: The OpenShift cluster must have OpenShift Service Mesh (which is based on Istio) installed and configured. The target applications that Flagger will manage must be deployed in namespaces that are part of this service mesh and have Istio sidecar injection enabled.
+Prerequisite 2: The Private Container Registry Secret
+The user requirement to deploy a Flagger image from a private repository necessitates an authentication mechanism. Kubernetes uses imagePullSecrets of type kubernetes.io/dockerconfigjson to store registry credentials. This secret must be created in the same namespace as Flagger and associated with the ServiceAccount that the Flagger pod will use.
+Actionable Requirement: A Secret containing the private repository credentials must be created in the flagger-system namespace. Section IV provides the YAML template for this resource.
+Prerequisite 3: Sysdig API and Authentication Artifacts
+This is the most complex prerequisite. Flagger requires a metrics provider to perform release analysis and validation. The user has selected Sysdig. A critical architectural distinction must be made:
+Sysdig Agent: The agent, typically run as a DaemonSet, embeds a lightweight Prometheus-compatible server for scraping local metrics.
+Sysdig SaaS Platform: The centralized Sysdig platform provides a robust, authenticated, Prometheus-compatible querying API.
+While a simple integration could point Flagger to a Service fronting the local Sysdig agent API , this is a fragile pattern. The more robust, scalable, and enterprise-appropriate solution is to query the central Sysdig SaaS Prometheus API endpoint. Flagger's MetricTemplate resource is designed for this exact scenario, supporting an external address and an authentication secretRef.
+Actionable Requirements: The user must obtain two artifacts from their Sysdig account:
+Sysdig API Token: A bearer token for API authentication. This will be stored in a Kubernetes Secret.
+Sysdig Regional API Endpoint: The Prometheus-compatible query URL for the account's region (e.g., https://api.us1.sysdig.com, https://eu1.app.sysdig.com/prometheus). This URL will be used in the Flagger Deployment arguments and MetricTemplate definitions.
+III. Section 1: Declarative GitOps Repository Structure
+The following file structure represents the complete Kustomize base and overlay configuration required. This structure will be populated with the YAML files detailed in the subsequent sections.
+flagger-deployment/
+├── argocd-application.yaml
+├── base/
+│   ├── kustomization.yaml
+│   ├── flagger-namespace.yaml
+│   └── private-registry-secret.yaml
+└── overlays/
+    └── openshift/
+        ├── kustomization.yaml
+        ├── metrics/
+        │   ├── sysdig-api-secret.yaml
+        │   ├── metrictemplate-success-rate.yaml
+        │   └── metrictemplate-request-duration.yaml
+        ├── scc-rbac/
+        │   ├── flagger-scc-clusterrole.yaml
+        │   └── flagger-scc-rolebinding.yaml
+        ├── patch-deployment-image-registry.yaml
+        ├── patch-deployment-args-sysdig.yaml
+        └── patch-serviceaccount-secret.yaml
+
+
+Table 1: Kustomize Patching and Resource Strategy
+This table details the purpose of each custom file in the overlays/openshift directory. It connects each file to a specific user requirement or platform constraint, explaining what is being changed from the base and why it is necessary.
+Target Resource (from base)
+Patching Goal / New Resource
+Justification
+Kustomize File (overlays/openshift/)
+Deployment/flagger
+Modify spec.template.spec.image
+User Requirement: Use custom image from private registry.
+patch-deployment-image-registry.yaml
+Deployment/flagger
+Modify spec.template.spec.containers.args
+Dependency: Set --mesh-provider=istio. User Req: Set --metrics-server to Sysdig SaaS API.
+patch-deployment-args-sysdig.yaml
+ServiceAccount/flagger
+Add imagePullSecrets
+User Requirement: Grant pod permissions to pull from private registry.
+patch-serviceaccount-secret.yaml
+(New Resource)
+ClusterRole/flagger-scc-anyuid
+OpenShift Constraint: Define a role that can use the anyuid SCC to pass pod admission.
+scc-rbac/flagger-scc-clusterrole.yaml
+(New Resource)
+RoleBinding/flagger-scc-binding
+OpenShift Constraint: Grant the flagger ServiceAccount the flagger-scc-anyuid role.
+scc-rbac/flagger-scc-rolebinding.yaml
+(New Resource)
+Secret/sysdig-api-secret
+User Requirement: Securely store the Sysdig API (Bearer) token for MetricTemplates.
+metrics/sysdig-api-secret.yaml
+(New Resource)
+MetricTemplate/istio-success-rate
+User Requirement: Define a custom canary metric for Sysdig, replacing Flagger's built-in metric.
+metrics/metrictemplate-success-rate.yaml
+(New Resource)
+MetricTemplate/istio-request-duration
+User Requirement: Define a custom canary metric for Sysdig, replacing Flagger's built-in metric.
+metrics/metrictemplate-request-duration.yaml
+
+IV. Section 2: Configuring the Kustomize base
+The base directory contains all common, environment-agnostic resources.
+File: base/kustomization.yaml
+This file defines the source of truth for the Flagger installation. It uses the official Flagger Kustomize repository as a remote base. This approach is superior to maintaining a local copy of the manifests, as it allows for simple, declarative upgrades by modifying the ?ref= tag. This remote base includes all standard Flagger resources: CRDs, Deployment, ServiceAccount, ClusterRole, and ClusterRoleBinding.
+# base/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# This remote base pulls in all the standard Flagger manifests:
+# Deployment, ServiceAccount, ClusterRole, ClusterRoleBinding, CRDs.
+bases:
+  - https://github.com/fluxcd/flagger/kustomize/kubernetes?ref=main
+
+# We also add our own base resources that will be common to all overlays.
+resources:
+  - flagger-namespace.yaml
+  - private-registry-secret.yaml
+
+
+File: base/flagger-namespace.yaml
+This manifest defines the namespace for the Flagger operator. The istio-injection: "disabled" label is critical. Flagger is an operator that configures the Istio service mesh; it must not be part of the mesh itself. This label instructs the OpenShift Service Mesh admission controller to not inject an Istio sidecar into the Flagger pod.
+# base/flagger-namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flagger-system
+  labels:
+    # Prevents OpenShift Service Mesh from injecting a sidecar
+    istio-injection: "disabled"
+
+
+File: base/private-registry-secret.yaml
+This manifest provides the template for the private registry credentials, as required by the user. The user must replace the placeholder YOUR_BASE64_ENCODED_DOCKER_CONFIG with the base64-encoded content of their ~/.docker/config.json file.
+# base/private-registry-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+[span_6](start_span)[span_6](end_span)  name: private-registry-secret
+  namespace: flagger-system
+type: kubernetes.io/dockerconfigjson
+data:
+  # Run: echo -n '{"auths": {"my.private.repo": {"auth": "..."}}}' | base64
+ .dockerconfigjson: YOUR_BASE64_ENCODED_DOCKER_CONFIG
+
+
+V. Section 3: OpenShift-Specific Integration (overlays/openshift/scc-rbac/)
+This section provides the definitive solution to the most significant blocker for deploying containerized workloads on OpenShift: Security Context Constraints (SCCs).
+Analysis: Why Flagger Fails on OpenShift's Default Security Model
+OpenShift is secure by default and enforces this security posture using SCCs. By default, all pods in a user-created namespace are governed by the restricted SCC. A key feature of this SCC is that it forces pods to run as a randomly assigned User ID (UID) from within a specific range allocated to that namespace.
+The default Flagger Deployment (pulled from the remote base) may specify a static runAsUser (e.g., runAsUser: 0 for root or another non-random UID). When the Flagger Pod is created, the OpenShift admission controller intercepts it and validates its securityContext against the SCCs allowed for the pod's ServiceAccount (in this case, flagger). The request for a specific UID is a direct violation of the restricted policy, causing the admission controller to reject the pod. This results in a "permission denied" error and a failed deployment.
+The correct solution is not to modify the default SCCs. Instead, we declaratively grant the flagger ServiceAccount permission to use the stock OpenShift SCC named anyuid. The anyuid SCC allows a pod to run with the UID specified in its image or securityContext while still withholding more dangerous host-level privileges. This permission is granted using Kubernetes RBAC resources.
+File: overlays/openshift/scc-rbac/flagger-scc-clusterrole.yaml
+This manifest creates a new ClusterRole that contains the single, specific permission required: the use verb on the anyuid securitycontextconstraint resource.
+# overlays/openshift/scc-rbac/flagger-scc-clusterrole.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: flagger-scc-anyuid
+rules:
+- apiGroups:
+    - security.openshift.io
+  resourceNames:
+    - anyuid
+  resources:
+    - securitycontextconstraints
+  verbs:
+    - use
+
+
+File: overlays/openshift/scc-rbac/flagger-scc-rolebinding.yaml
+This manifest connects the components. It binds the flagger ServiceAccount (created by the base) to the flagger-scc-anyuid ClusterRole (created above).
+A namespaced RoleBinding is used instead of a ClusterRoleBinding. This is a critical security best practice, as it adheres to the principle of least privilege. It grants the f[span_74](start_span)[span_74](end_span)[span_76](start_span)[span_76](end_span)lagger ServiceAccount permission to use the anyuid SCC only for pods created within the flagger-system namespace, not cluster-wide.
+# overlays/openshift/scc-rbac/flagger-scc-rolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: flagger-scc-binding
+  namespace: flagger-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: flagger-scc-anyuid
+subjects:
+- kind: ServiceAccount
+  name: flagger # This is the SA created by the Kustomize remote base
+  namespace: flagger-system
+
+
+VI. Section 4: Sysdig Metric Provider Integration (overlays/openshift/metrics/)
+This section delivers the custom configuration to integrate Sysdig as Flagger's metrics provider, replacing the default Prometheus-based analysis.
+Analysis: Re-architecting Flagger's Analysis with MetricTemplate
+Flagger's built-in canary metrics (e.g., request-success-rate, request-duration) are implemented as hard-coded PromQL queries. These queries assume an unauthenticated, local Prometheus service (e.g., http://prometheus.istio-system:9090). These queries will fail when executed against the authenticated, external Sysdig SaaS API.
+The solution is to use Flagger's MetricTemplate Custom Resource. This CRD allows for the definition of custom, reusable metrics. We will create two MetricTemplates, one for success rate and one for duration. These templates will:
+Specify the Sysdig SaaS API URL as the address.
+Reference a new Secret via secretRef to provide the Sysdig API Bearer Token for authentication.
+Contain custom PromQL queries compatible with Sysdig's data and Istio's metrics.
+When a Canary resource is defined, it will reference these templates (templateRef) instead of the built-in metrics, thereby directing Flagger to use Sysdig for its analysis.
+File: overlays/openshift/metrics/sysdig-api-secret.yaml
+This manifest creates the Secret to securely store the Sysdig API token. Flagger's Prometheus provider documentation specifies that for bearer token authentication, it expects a secret key named token. The value must be the base64-encoded token. The Bearer prefix should not be included in the secret's value.
+# overlays/openshift/metrics/sysdig-api-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sysdig-[span_56](start_span)[span_56](end_span)api-secret
+  namespace: flagger-system
+type: Opaque
+data:
+  # The key MUST be "token"
+  # Run: echo -n "YOUR_SYSDIG_API_TOKEN" | base64
+  token: YOUR_BASE64_ENCODED_SYSDIG_API_TOKEN
+
+
+File: overlays/openshift/metrics/metrictemplate-success-rate.yaml
+This defines the reusable "Request Success Rate" metric. The address field must be populated with the correct regional Sysdig Prometheus API endpoint.
+The PromQL query is synthesized from Istio and Flagger documentation. It uses the istio_requests_total metric , filtering by reporter="source" to get client-side metrics and avoid double-counting. It calculates the ratio of non-5xx requests to total requests and utilizes Flagger's template variables ({{ target }}, {{ names[span_43](start_span)[span_43](end_span)[span_48](start_span)[span_48](end_span)pace }}, {{ interval }}).
+# overlays/openshift/metrics/metrictemplate-success-rate.yaml
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: istio-success-rate
+  namespace: flagger-system
+spec:
+  provider:
+    type: prometheus
+    # This MUST be your regional Sysdig Prometheus API endpoint
+[span_44](start_span)[span_44](end_span)[span_49](start_span)[span_49](end_span)    # e.g., https://api.us1.sysdig.com or https://eu1.app.sysdig.com/prometheus
+    # See Sysdig docs for 
+    address: https://<YOUR_SYSDIG_REGION_API_URL>
+    secretRef:
+      name: sysdig-api-secret # The secret we just defined
+  query: |
+    sum(irate(
+      istio_requests_total{
+        reporter="source",
+        destination_service_name="{{ ta[span_58](start_span)[span_58](end_span)[span_60](start_span)[span_60](end_span)[span_62](start_span)[span_62](end_span)[span_64](start_span)[span_64](end_span)[span_66](start_span)[span_66](end_span)rget }}",
+        destination_workload_namespace="{{ namespace }}",
+        response_code!~"5.*"
+      }[{{ interval }}]
+    ))
+    /
+    sum(irate(
+      istio_requests_total{
+        reporter="source",
+        destination_service_name="{{ target }}",
+        destination_workload_namespace="{{ namespace }}"
+      }[{{ interval }}]
+    ))
+    * 100
+
+
+File: overlays/openshift/metrics/metrictemplate-request-duration.yaml
+This defines the reusable "P99 Request Duration" (latency) metric. The query uses istio_request_duration_milliseconds_bucket with histogram_quantile(0.99,...) to calculate the 99th percentile latency. As with the success rate, it is filtered by reporter="source".
+# overlays/openshift/metrics/metrictemplate-request-duration.yaml
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: istio-request-duration
+  namespace: flagger-system
+spec:
+  provider:
+    type: prometheus
+    # This MUST be your regional Sysdig Prometheus API endpoint
+    address: https://<YOUR_SYSDIG_REGION_API_URL>
+    secretRef:
+      name: sysdig-api-secret
+  query: |
+    histogram_quantile(0.99,
+      sum(irate(
+        istio_request_duration_milliseconds_bucket{
+          reporter="source",
+          destination_service_name="{{ target }}",
+          destination_workload_namespace="{{ namespace }}"
+        }[{{ interval }}]
+      )) by (le)
+    )
+
+
+VII. Section 5: The Kustomize Overlay and Final Patches (overlays/openshift/)
+This section provides the Kustomize patches to modify the base resources and the final kustomization.yaml to orchestrate the entire overlay.
+File: overlays/openshift/patch-deployment-image-registry.yaml
+This manifest applies a strategic merge patch to the Flagger Deployment (from the base), modifying the image field to point to the user's private container registry. The user must change the image value to their specific private repository path and tag.
+# overlays/openshift/patch-deployment-image-registry.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flagger
+  namespace: flagger-system # Kustomize needs this to find the resource
+spec:
+  template:
+    spec:
+      containers:
+      - name: flagger
+        # This replaces the default ghcr.io/fluxcd/flagger image
+        image: my.private.repo/flagger:latest # <-- USER MUST CHANGE THIS
+
+
+File: overlays/openshift/patch-deployment-args-sysdig.yaml
+This is a critical patch that replaces the default container args for the Flagger Deployment. The default args from the base contain an incorrect --metrics-server URL (pointing to a local Prometheus). This patch sets the correct arguments:
+--mesh-provider=istio to satisfy the service mesh dependency.
+--metrics-server pointing to the Sysdig SaaS API URL , which must match the URL used in the MetricTemplates.
+# overlays/openshift/patch-deployment-args-sysdig.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flagger
+  namespace: flagger-system
+spec:
+ [span_68](start_span)[span_68](end_span) template:
+    spec:
+      containers:
+      - name: fla[span_70](start_span)[span_70](end_span)gger
+        # This 'args' block completely REPLACES the default one.
+        args:
+          - -mesh-provider=istio
+          - -metrics-server=https://<YOUR_SYSDIG_REGION_API_URL>
+          - -log-level=info
+          # Optional: Add alerting
+          # - -slack-url=https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK
+          # - -slack-channel=flagger-alerts
+
+
+File: overlays/openshift/patch-serviceaccount-secret.yaml
+This manifest patches the flagger ServiceAccount (from the base) to add the imagePullSecrets reference. This authorizes the ServiceAccount to use the private-registry-secret (defined in the base) when pulling the Flagger image.
+# overlays/openshift/patch-serviceaccount-secret.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: flagger
+  namespace: flagger-system
+# This adds the secret reference to the SA's list
+imagePullSecrets:
+- name: private-registry-secret
+
+
+File: overlays/openshift/kustomization.yaml[span_25](start_span)[span_25](end_span)[span_27](start_span)[span_27](end_span)[span_29](start_span)[span_29](end_span)
+This is the master file for the openshift overlay. It declaratively assembles the final configuration by:
+Inheriting all resources from the ../../base.
+Forcing all resources into the flagger-system namespace.
+Adding all new resources defined in the scc-rbac/ and metrics/ subdirectories.
+Applying all strategic merge patches to modify the base Deployment and ServiceAccount.
+# overlays/openshift/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# 1. Inherit from the base
+bases:
+  -../../base
+
+# 2. Set the namespace for all resources
+namespace: flagger-system
+
+# 3. Add all our new OpenShift- and Sysdig-specific resources
+resources:
+  - scc-rbac/flagger-scc-clusterrole.yaml
+  - scc-rbac/flagger-scc-rolebinding.yaml
+  - metrics/sysdig-api-secret.yaml
+  - metrics/metrictemplate-success-rate.yaml
+  - metrics/metrictemplate-request-duration.yaml
+
+# 4. Apply all patches to modify the base resources
+patchesStrategicMerge:
+  - patch-deployment-image-registry.yaml
+  - patch-deployment-args-sysdig.yaml
+  - patch-serviceaccount-secret.yaml
+
+
+VIII. Section 6: ArgoCD Deployment and Verification
+This section provides the final Application manifest to deploy the kustomized Flagger operator via ArgoCD.
+File: argocd-application.yaml
+This manifest defines an ArgoCD Application resource. It instructs ArgoCD to monitor the specified Git repository. The source.path field is set to overlays/openshift , directing ArgoCD to run kustomize build on that directory. ArgoCD will then apply the resulting (base + overlay) manifests to the cluster.
+This file should be placed at the root of the Git repository, outside the Kustomize structure.
+# argocd-application.yaml
+# This file lives *outside* the kustomize structure,
+# typically at the root of the repo.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: flagger-operator
+  # Deploys the Application resource to the ArgoCD namespace
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    # This is where Flagger will be installed
+    namespace: flagger-system
+  source:
+    # This MUST be the URL to YOUR Git repository
+    repoURL: https://github.com/your-org/flagger-deployment.git
+    targetRevision: main
+    # This points ArgoCD to our OpenShift-specific overlay
+    path: overlays/openshift
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # Allows ArgoCD to create 'flagger-system'
+      - CreateNamespace=true
+
+
+Verification Steps
+After committing all files to the Git repository and applying the argocd-application.yaml (e.g., oc apply -f argocd-application.yaml), perform the following verification steps:
+Monitor ArgoCD Sync: Observe the flagger-operator application in the ArgoCD UI. Wait for it to become Healthy and Synced.
+Verify Pod Status: Check that the Flagger pod starts successfully.
+oc get pods -n flagger-system
+The pod should enter the Running state. If it is stuck in Pending or CrashLoopBackOff, it indicates a failure.
+Verify SCC Admission (Critical): Check the pod's annotations to confirm it was successfully admitted using the anyuid SCC.
+oc describe pod -n flagger-system -l app=flagger | grep openshift.io/scc
+Expected Output: openshift.io/scc: anyuid This proves the RBAC configuration from Section V was successful.
+Verify Deployment Patches: Inspect the running Deployment to ensure all patches were applied.
+oc get deployment flagger -n flagger-system -o yaml
+
+
+Confirm spec.template.spec.containers.image points to your private registry.
+Confirm spec.template.spec.containers.args contains the --mesh-provider=istio and --metrics-server=https://<YOUR_SYSDIG_REGION_API_URL> arguments.
+Verify ServiceAccount Patch: Inspect the ServiceAccount.
+oc get sa flagger -n flagger-system -o yaml
+
+
+Confirm the imagePullSecrets: block is present and contains name: private-registry-secret.
+Verify Logs: Check the Flagger operator logs for a clean startup and connection to Istio.
+oc logs deployment/flagger -n flagger-system -f
+
+
+Look for logs indicating a successful connection to the mesh provider (e.g., "Connected to mesh provider istio").
+IX. Appendix: Example Canary Manifest for Sysdig-Powered Analysis
+The final step is to use the integrated system. This example Canary manifest demonstrates how to configure a progressive delivery analysis that relies on the custom Sysdig MetricTemplates created in Section VI.
+This manifest defines a canary analysis for a test application named podinfo. The critical section is spec.analysis.metrics. Instead of using Flagger's built-in metric names , it uses templateRef. This instructs Flagger to execute the custom, authenticated PromQL queries defined in the istio-success-rate and istio-request-duration MetricTemplates, using the Sysdig API as the data source to drive the canary analysis.
+# example-canar[span_84](start_span)[span_84](end_span)[span_87](start_span)[span_87](end_span)y-analysis.yaml
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: podinfo
+  # This application must be in an Istio-enabled namespace
+  namespace: your-test-app
+spec:
+  # This is the Deployment that Flagger will manage
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: podinfo
+  
+  # This is the Service that Flagger will create/manage
+  service:
+    port: 9898
+    
+  # This is the core analysis, now powered by Sysdig
+  analysis:
+    interval: 1m
+    threshold: 5
+    stepWeight: 10
+    metrics:
+    
+    # 1. This uses the custom Sysdig-backed success rate metric
+    - name: "istio-success-rate"
+      templateRef:
+        name: istio-success-rate
+        # Points to the template in the flagger-system namespace
+        namespace: flagger-system
+      thresholdRange:
+        min: 99 # 99% success rate
+      interval: 1m
+    
+    # 2. This uses the custom Sysdig-backed latency metric
+    - name: "istio-request-duration"
+      templateRef:
+        name: istio-request-duration
+        # Points to the template in the flagger-system namespace
+        namespace: flagger-system
+      thresholdRange:
+        max: 500 # 500ms P99 latency
+      interval: 1m
+
+
+Works cited
+1. Applied GitOps with ArgoCD and Kustomize - GitHub, https://github.com/hseligson1/kustomize-gitops-example 2. Kustomize - Argo CD - Declarative GitOps CD for Kubernetes - Read the Docs, https://argo-cd.readthedocs.io/en/stable/user-guide/kustomize/ 3. Flagger Install on Kubernetes, https://docs.flagger.app/install/flagger-install-on-kubernetes 4. Kustomize — use patches to add or override resources | by Giorgio Cerruti | Medium, https://medium.com/@giorgiodevops/kustomize-use-patches-to-add-or-override-resources-48ef65cb634c 5. Pull an Image from a Private Registry - Kubernetes, https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/ 6. Flagger - Flux, https://fluxcd.io/flagger/ 7. Error installing flagger on OpenShift · Issue #542 - GitHub, https://github.com/weaveworks/flagger/issues/542 8. Chapter 15. Managing security context constraints | Authentication and authorization | OpenShift Container Platform | 4.12 | Red Hat Documentation, https://docs.redhat.com/en/documentation/openshift_container_platform/4.12/html/authentication_and_authorization/managing-pod-security-policies 9. start pod with root privilege on OpenShift - kubernetes - Stack Overflow, https://stackoverflow.com/questions/68543425/start-pod-with-root-privilege-on-openshift 10. Collect Prometheus Metrics - Sysdig Docs, https://docs.sysdig.com/en/docs/sysdig-monitor/integrations/custom-integrations/collect-prometheus-metrics/ 11. Grafana Integration - Sysdig Docs, https://docs.sysdig.com/en/docs/sysdig-monitor/integrations/grafana-integration/ 12. Mastering Canary Deployments with Flagger in Kubernetes | by Kiran Chowdhury | Medium, https://medium.com/@kiran.soft/mastering-canary-deployments-with-flagger-in-kubernetes-585b7492b662 13. Deployment Strategies - Flagger, https://docs.flagger.app/usage/deployment-strategies 14. Flagger, https://flagger.app/ 15. Querying Metrics from Prometheus - Istio, https://istio.io/latest/docs/tasks/observability/metrics/querying-metrics/ 16. How to monitor Istio, the Kubernetes service mesh - Sysdig, https://www.sysdig.com/blog/monitor-istio 17. Automatically add imagePullSecrets to a ServiceAccount - Stack Overflow, https://stackoverflow.com/questions/52320090/automatically-add-imagepullsecrets-to-a-serviceaccount 18. Adding an ImagePullSecret to a ServiceAccount in Tutor k8s - Open edX discussions, https://discuss.openedx.org/t/adding-an-imagepullsecret-to-a-serviceaccount-in-tutor-k8s/10463 19. kustomize: add imagePullSecrets to all deployments - Stack Overflow, https://stackoverflow.com/questions/59221196/kustomize-add-imagepullsecrets-to-all-deployments 20. Metrics Analysis - Flagger, https://docs.flagger.app/usage/metrics 21. (Legacy) Collect Prometheus Metrics - Sysdig Docs, https://docs.sysdig.com/en/docs/sysdig-monitor/integrations/legacy-integrations/legacycollect-prometheus-metrics/ 22. Prometheus and Kubernetes Metrics Ingestion - Sysdig, https://www.sysdig.com/blog/kubernetes-metrics-ingestion 23. Chart: Sysdig Agent | Sysdig Helm Charts Repository, https://charts.sysdig.com/charts/agent/ 24. Prometheus Public API - Sysdig Docs, https://docs.sysdig.com/en/sysdig-monitor/prometheuspublicapi/ 25. Prometheus - Sysdig Dev, https://www.sysdig.com/integrations/prometheus 26. Canary analysis metrics templating · Issue #418 · fluxcd/flagger - GitHub, https://github.com/fluxcd/flagger/issues/418 27. Docs overview | sysdiglabs/sysdig - Terraform Registry, https://registry.terraform.io/providers/sysdiglabs/sysdig/latest/docs 28. Retrieve the Sysdig API Token, https://docs.sysdig.com/en/administration/retrieve-the-sysdig-api-token/ 29. Sysdig API, https://docs.sysdig.com/en/developer-tools/sysdig-api/ 30. Configure Prometheus Remote Write - Sysdig Docs, https://docs.sysdig.com/en/sysdig-monitor/install-prometheus-remote-write/ 31. SaaS Regions and IP Ranges - Sysdig Docs, https://docs.sysdig.com/en/administration/saas-regions-and-ip-ranges/ 32. Extracting metrics from a Monitoring instance by using the API - IBM Cloud Docs, https://cloud.ibm.com/docs/monitoring?topic=monitoring-metrics_api 33. Flagger Install on Kubernetes - Flux, https://fluxcd.io/flagger/install/flagger-install-on-kubernetes/ 34. Blue/Green Deployments With Flux and Flagger | by Vinayak Pandey - Medium, https://vinayakpandey-7997.medium.com/blue-green-deployments-with-flux-and-flagger-3e2e95806577 35. How Security Context Constraints (SCCs) work in OpenShift, https://andreaskaris.github.io/blog/openshift/scc/ 36. Chapter 13. Managing security context constraints | Authentication and authorization | OpenShift Dedicated | 4 | Red Hat Documentation, https://docs.redhat.com/en/documentation/openshift_dedicated/4/html/authentication_and_authorization/managing-pod-security-policies 37. Openshift: unable to validate against any security > context constraint - Stack Overflow, https://stackoverflow.com/questions/61239490/openshift-unable-to-validate-against-any-security-context-constraint 38. Red Hat OpenShift security context constraints - IBM Cloud Docs, https://cloud.ibm.com/docs/openshift?topic=openshift-openshift_scc 39. SCC anyuid example, https://examples.openshift.pub/deploy/scc-anyuid/ 40. Chapter 15. Managing security context constraints | Authentication and authorization | OpenShift Container Platform | 4.10 | Red Hat Documentation, https://docs.redhat.com/en/documentation/openshift_container_platform/4.10/html/authentication_and_authorization/managing-pod-security-policies 41. OpenShift: Add SCC to Service Account in Yaml - Stack Overflow, https://stackoverflow.com/questions/60100714/openshift-add-scc-to-service-account-in-yaml 42. Declarative Security Context Contraints Using RBAC - Block 87, https://blog.andyserver.com/2020/08/declarative-security-context-contraints-using-rbac/ 43. Managing SCCs in OpenShift - Red Hat, https://www.redhat.com/en/blog/managing-sccs-in-openshift 44. RBAC & SCC Integration using RoleBinding & ClusterRoleBinding | by Tommer Amber, https://medium.com/@tamber/rbac-scc-integration-using-rolebinding-clusterrolebinding-536c069cc6ef 45. Canary analysis with Prometheus Operator - Flagger, https://docs.flagger.app/tutorials/prometheus-operator 46. Automate Canary Deployments with Flagger and Istio: Step-by-Step Hands-On Tutorial, https://medium.com/@dhruv-mavani/automate-canary-deployments-with-flagger-and-istio-step-by-step-hands-on-tutorial-aa79f2d29a0b 47. Istio - Sysdig Docs, https://docs.sysdig.com/en/docs/sysdig-monitor/integrations/integration-library/istio/ 48. Configuration - Prometheus, https://prometheus.io/docs/prometheus/1.8/configuration/configuration/ 49. Average request duration using Prometheus - Stack Overflow, https://stackoverflow.com/questions/62137292/average-request-duration-using-prometheus 50. How do I append container arguments? · Issue #3265 · kubernetes-sigs/kustomize - GitHub, https://github.com/kubernetes-sigs/kustomize/issues/3265 51. Declarative Setup - Argo CD - Declarative GitOps CD for Kubernetes, https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/ 52. How it works - Flagger, https://docs.flagger.app/usage/how-it-works
