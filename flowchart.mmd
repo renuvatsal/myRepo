@@ -1,46 +1,46 @@
 graph TD
     subgraph "1. CI/CD Pipeline (GitHub Actions)"
-        A[Dev pushes code/config to GitHub] --> B(GHA Workflow Triggers)
-        B --> C[Build & Push new container image]
-        C --> D[Update Helm 'values.yaml' with new image tag]
-        D --> E[GHA job runs 'helm upgrade']
+        A["Dev pushes code/config to GitHub"] --> B("GHA Workflow Triggers")
+        B --> C["Build & Push new container image"]
+        C --> D["Update Helm 'values.yaml' with new image tag"]
+        D --> E["GHA job runs 'helm upgrade'"]
     end
 
     subgraph "2. OpenShift Cluster (Deployment)"
-        E --> F(Helm updates Kubernetes 'Deployment' resource)
-        F --> G(GHA job now 'waits' for Flagger 'Canary' status)
+        E --> F("Helm updates Kubernetes 'Deployment' resource")
+        F --> G("GHA job now 'waits' for Flagger 'Canary' status")
     end
 
     subgraph "3. Flagger Progressive Delivery"
-        F --> H[Flagger Operator detects 'Deployment' change]
-        H --> I[Flagger scales up 'Canary' (new version)]
-        I --> J[Flagger modifies Istio 'VirtualService' to split traffic (e.g., 10% to canary)]
+        F --> H["Flagger Operator detects 'Deployment' change"]
+        H --> I["Flagger scales up 'Canary' (new version)"]
+        I --> J["Flagger modifies Istio 'VirtualService' to split traffic (e.g., 10% to canary)"]
     end
 
     subgraph "4. Analysis Loop (Flagger + Sysdig + Istio)"
-        J --> K(Live traffic is routed to Primary AND Canary)
-        K --> L[Flagger queries Sysdig metrics (e.g., success rate, latency)]
-        L --> M{Metrics OK? (within thresholds)}
+        J --> K("Live traffic is routed to Primary AND Canary")
+        K --> L["Flagger queries Sysdig metrics (e.g., success rate, latency)"]
+        L --> M{"Metrics OK? (within thresholds)"}
     end
 
     subgraph "5. Rollback Path (Failure)"
-        M -- No --> N[ROLLBACK: Analysis failed!]
-        N --> O[Flagger resets Istio 'VirtualService' (0% to canary)]
-        O --> P[Flagger scales down failed 'Canary' deployment]
-        P --> Q(Flagger 'Canary' resource status = 'Failed')
+        M -- No --> N["ROLLBACK: Analysis failed!"]
+        N --> O["Flagger resets Istio 'VirtualService' (0% to canary)"]
+        O --> P["Flagger scales down failed 'Canary' deployment"]
+        P --> Q("Flagger 'Canary' resource status = 'Failed'")
     end
 
     subgraph "6. Promotion Path (Success)"
-        M -- Yes --> R{Traffic at 100%?}
-        R -- No --> J(Flagger increases traffic (e.g., 20%) & repeats analysis)
-        R -- Yes --> S[PROMOTE: Canary is validated]
-        S --> T[Flagger updates 'Primary' Deployment with new image]
-        T --> U[Flagger resets Istio 'VirtualService' (100% to new primary)]
-        U --> V[Flagger scales down old 'Primary' deployment]
-        V --> W(Flagger 'Canary' resource status = 'Succeeded')
+        M -- Yes --> R{"Traffic at 100%?"}
+        R -- "No (increase traffic & repeat)" --> J
+        R -- Yes --> S["PROMOTE: Canary is validated"]
+        S --> T["Flagger updates 'Primary' Deployment with new image"]
+        T --> U["Flagger resets Istio 'VirtualService' (100% to new primary)"]
+        U --> V["Flagger scales down old 'Primary' deployment"]
+        V --> W("Flagger 'Canary' resource status = 'Succeeded'")
     end
 
     subgraph "7. Final Pipeline Status"
-        Q --> Z_FAIL[GHA 'wait' receives 'Failed' status. Pipeline = RED]
-        W --> Z_PASS[GHA 'wait' receives 'Succeeded' status. Pipeline = GREEN]
+        Q --> Z_FAIL["GHA 'wait' receives 'Failed' status. Pipeline = RED"]
+        W --> Z_PASS["GHA 'wait' receives 'Succeeded' status. Pipeline = GREEN"]
     end
