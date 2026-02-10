@@ -1,0 +1,51 @@
+name: ADgroup and SA Onboarding
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Choose environment"
+        required: true
+        type: choice
+        default: 'dev'
+        options:
+          - dev
+          - UAT
+          - QA
+          - PROD
+      trigger:
+        description: "Trigger type"
+        required: true
+        type: choice
+        default: 'SA'
+        options:
+          - serviceaccount
+          - adgroup
+          - groupassignment
+          - adgroup&groupassignment
+          - all
+jobs:
+  trigger-script:
+    environment: ${{ inputs.environment }}
+    runs-on: self-hosted
+    env:
+      CLIENT_ID: ${{ vars.CLIENT_ID }}
+      CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+      KEY: ${{ secrets.KEY }}
+      TOKEN: ${{ secrets.TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Verify File Exists
+        run: |
+          if [ ! -f "${{ github.workspace }}/sampledetails/values.yaml" ]; then
+            echo "File values.yaml not found in sampledetails folder within the workspace"
+            exit 1
+          fi
+
+      - name: Execute Python Script
+        uses: OCP/enterprise-ocp-svcac-adgroup/.github/actions/python_script@master
+        with:
+          environment: ${{ inputs.environment }}
+          trigger: ${{ inputs.trigger }}
+          files: values.yaml
