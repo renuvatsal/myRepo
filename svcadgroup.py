@@ -47,7 +47,6 @@ def build_environment(env):
             'Authorization': fetch_env('TOKEN'),
         }
     }
-    
     logging.info(f'{COLOR_GREEN}Environment payload generated successfully')
     return environment_payload
 
@@ -57,7 +56,6 @@ def get_token(auth_server_url):
     token_response = requests.post(auth_server_url,
                                    data=token_req_payload, verify=False, allow_redirects=False,
                                    auth=(fetch_env('CLIENT_ID'), fetch_env('CLIENT_SECRET')))
-    
     if token_response.status_code == 200:
         logging.info(f'{COLOR_GREEN}Fetched token successfully, Status code: {token_response.status_code}')
         tokens = json.loads(token_response.text)
@@ -101,22 +99,23 @@ def api_call(name, url, payload_list, headers):
                 if 'errorList' and 'errorMessage' in response.text:
                     error_code = output["errorList"][0]["errorCode"]
                     error_msg = output["errorList"][0]["errorMessage"]
-        if response.status_code == 200 and output["status"] == 'SUCCESS':
-            logging.info(f'{COLOR_GREEN}Response: {output["message"]}')
-            break # Exit the retry loop on success
-        else:
-            # For any non-200 status code, including 404, retry
-            if output["status"] == 'FAILED':
-                if error_code != '' and error_msg != '' and 'already exist' not in error_msg:
-                    logging.warning(f'{COLOR_RED}Read API call response below')
-                    logging.error(f'{COLOR_RED}ERROR CODE: {error_code}')
-                    logging.error(f'{COLOR_RED}ERROR MESSAGE: {error_msg}\n')
-                    retry_count += 1
-                elif 'already exist' in error_msg:
-                    logging.info(f'{COLOR_GREEN}{error_msg}\n')
-                    break
+                    
+                if response.status_code == 200 and output["status"] == 'SUCCESS':
+                    logging.info(f'{COLOR_GREEN}Response: {output["message"]}')
+                    break # Exit the retry loop on success
                 else:
-                    logging.error(f'{COLOR_RED}Response: {output}\n')
+                    # For any non-200 status code, including 404, retry
+                    if output["status"] == 'FAILED':
+                        if error_code != '' and error_msg != '' and 'already exist' not in error_msg:
+                            logging.warning(f'{COLOR_RED}Read API call response below')
+                            logging.error(f'{COLOR_RED}ERROR CODE: {error_code}')
+                            logging.error(f'{COLOR_RED}ERROR MESSAGE: {error_msg}\n')
+                            retry_count += 1
+                        elif 'already exist' in error_msg:
+                            logging.info(f'{COLOR_GREEN}{error_msg}\n')
+                            break
+                        else:
+                            logging.error(f'{COLOR_RED}Response: {output}\n')
 
             if retry_count < max_retries:
                 logging.info(f"Waiting 60 seconds before retry {retry_count + 1}...")
@@ -124,9 +123,8 @@ def api_call(name, url, payload_list, headers):
             else:
                 logging.error(f'{COLOR_RED}Max retries reached after all attempts for {name.upper()}')
                 sys.exit(1)
-                
-    except requests.RequestException as e:
-        raise requests.ConnectionError(f"{COLOR_RED}{name.upper()} error: {str(e)}")
+        except requests.RequestException as e:
+            raise requests.ConnectionError(f"{COLOR_RED}{name.upper()} error: {str(e)}")
 
 # Prepare template for api call
 def prepare_payload(adgroup_value, svc_value, appid_value, environment_payload, trigger, primary_owner, secondary_owner, users_list, env):
@@ -162,8 +160,8 @@ def prepare_payload(adgroup_value, svc_value, appid_value, environment_payload, 
         "groupName": adgroup_value,
         "groupDomain": group_domain,
         "nuids": user
-    }
-    for user in users_list
+        }
+        for user in users_list
     ]
     
     payloads = {
@@ -171,14 +169,17 @@ def prepare_payload(adgroup_value, svc_value, appid_value, environment_payload, 
         "adgroup": adgroup_payload,
         "groupassignment": groupassignment_payload
     }
+
     
     headers = environment_payload['headers']
     
     links = dict(list(environment_payload.items())[:3])
+    
     items = list(links.items())
     total = len(items)
 
     if trigger == 'all':
+        
         for index, (name, link) in enumerate(links.items()):
             payload = name.split('_')[0]
             logging.info(f'Processing {payload.upper()} payload')
@@ -191,9 +192,9 @@ def prepare_payload(adgroup_value, svc_value, appid_value, environment_payload, 
                 time.sleep(60)
             else:
                 logging.info('All payloads processed.')
-    
     else:
         if '&' in trigger:
+            
             optional_trigger = trigger.split('&')
 
             for index, (name, link) in enumerate(links.items()):
@@ -215,6 +216,7 @@ def prepare_payload(adgroup_value, svc_value, appid_value, environment_payload, 
             link = links.get(f'{trigger}_url')
             payload_data = payloads.get(f'{trigger}')
             api_call(trigger, link, payload_data, headers)
+            
 def process_yaml_file(filename, base_path):
     try:
         file_path = os.path.join(base_path, filename)
@@ -240,9 +242,7 @@ def process_yaml_file(filename, base_path):
         adgroup_words = adgroup_value.split("_")
         if adgroup_words[0] != "Openshift":
             raise Exception("The first word of the AD group should be 'Openshift'")
-        
         return adgroup_value, svc_value, appid_value, primaryOwner, secondaryOwner, users_list
-    
     except FileNotFoundError:
         print("Values FileNotFoundError")
 
