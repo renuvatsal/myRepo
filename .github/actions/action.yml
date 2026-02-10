@@ -1,0 +1,20 @@
+name: 'Python Script Executor'
+description: 'Executes Python script to generate values file'
+inputs:
+  environment:
+    description: 'environment'
+    required: true
+  trigger:
+    description: 'trigger'
+    required: true
+  files:
+    description: 'YAML files to process'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - id: python-script-execution
+      name: Execute Python Script
+      run: python3 -u ${{ github.action_path }}/main.py --environment "${{ inputs.environment }}" --trigger "${{ inputs.trigger }}" ${{ inputs.files }}
+      shell: bash
